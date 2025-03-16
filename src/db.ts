@@ -33,4 +33,10 @@ const recordSchema = new mongoose.Schema({
   timestamps: true,
 });
 
+const userSchema = new mongoose.Schema({
+  username: String,
+  password: String
+})
+
+export const UserModel = mongoose.model('User', userSchema)
 export const RecordModel = mongoose.model('Record', recordSchema);

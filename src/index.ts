@@ -2,17 +2,20 @@ import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import { RecordModel } from './db';
+import { RecordModel, UserModel } from './db';
+import { z } from 'zod';
+import jwt from 'jsonwebtoken';
+import { JWT_PASSWORD } from './config';
+import { userMiddleware } from './middleware';
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
 
-// Connect to MongoDB with retry logic
 const connectWithRetry = async () => {
   const MONGODB_URI = process.env.MONGODB_URI;
   if (!MONGODB_URI) {
@@ -22,7 +25,7 @@ const connectWithRetry = async () => {
 
   try {
     await mongoose.connect(MONGODB_URI, {
-      serverSelectionTimeoutMS: 5000, // Timeout after 5s instead of 30s
+      serverSelectionTimeoutMS: 5000,
     });
     console.log('Connected to MongoDB Atlas');
   } catch (error) {
@@ -34,7 +37,7 @@ const connectWithRetry = async () => {
 
 connectWithRetry();
 
-// Handle MongoDB connection errors
+
 mongoose.connection.on('error', (error) => {
   console.error('MongoDB connection error:', error);
 });
@@ -44,8 +47,71 @@ mongoose.connection.on('disconnected', () => {
   connectWithRetry();
 });
 
-// Get all records
-app.get('/api/records', async (req, res) => {
+app.post('/api/signup', async (req, res) => {
+  const requiredBody = z.object({
+    username: z.string().min(8).max(30),
+    password: z.string().min(8).max(30)
+  })
+
+  const parseBody = requiredBody.safeParse(req.body);
+  if(!parseBody.success){
+    res.status(400).json({
+      message: "Check the credentials"
+    })
+  }
+
+  try{
+    const { username, password } = req.body;
+    await UserModel.create({
+      username: username, 
+      password: password
+    })
+    res.status(400).json({
+      message: "signed up"
+    })
+  } catch(e) {
+    res.status(411).json({
+      message: "User already exists"
+    })
+  }
+})
+
+app.post('/api/signin', async (req, res) =>{
+  const requiredBody = z.object({
+    username: z.string().min(8).max(30),
+    password: z.string().min(8).max(30)
+  })
+
+  const parseBody = requiredBody.safeParse(req.body);
+  if(!parseBody.success){
+    res.status(400).json({
+      message: "Check the credentials"
+    })
+  }
+
+  const { username, password } = req.body;
+
+  const user = await UserModel.findOne({
+    username, 
+    password
+  })
+
+  if(user){
+    const token = jwt.sign({
+      id: user._id
+    }, JWT_PASSWORD)
+
+    res.status(200).json({
+      token: token
+    })
+  } else {
+    res.status(400).json({
+      message: "Incorrect credentials"
+    })
+  }
+})
+
+app.get('/api/records', userMiddleware, async (req, res) => {
   try {
     const records = await RecordModel.find().sort({ lastUpdated: -1 });
     res.json(records);
@@ -54,8 +120,8 @@ app.get('/api/records', async (req, res) => {
   }
 });
 
-// Get record by ID
-app.get('/api/records/:id', async(req, res) => {
+
+app.get('/api/records/:id', userMiddleware, async(req, res) => {
   try {
     const record = await RecordModel.findById(req.params.id);
     if (!record) {
@@ -67,8 +133,8 @@ app.get('/api/records/:id', async(req, res) => {
   }
 });
 
-// Create new record
-app.post('/api/records', async (req, res) => {
+
+app.post('/api/records', userMiddleware, async (req, res) => {
   try {
     const record = new RecordModel(req.body);
     await record.save();
@@ -78,8 +144,8 @@ app.post('/api/records', async (req, res) => {
   }
 });
 
-// Update record
-app.put('/api/records/:id', async (req, res) => {
+
+app.put('/api/records/:id', userMiddleware, async (req, res) => {
 
   try {
     const record = await RecordModel.findByIdAndUpdate(
@@ -97,8 +163,8 @@ app.put('/api/records/:id', async (req, res) => {
   
 });
 
-// Delete record
-app.delete('/api/records/:id', async (req, res) => {
+
+app.delete('/api/records/:id', userMiddleware, async (req, res) => {
   try {
     const record = await RecordModel.findByIdAndDelete(req.params.id);
     if (!record) {
@@ -110,8 +176,8 @@ app.delete('/api/records/:id', async (req, res) => {
   }
 });
 
-// Get statistics
-app.get('/api/stats', async (req, res) => {
+
+app.get('/api/stats', userMiddleware, async (req, res) => {
   try {
     const total = await RecordModel.countDocuments();
     const pending = await RecordModel.countDocuments({ status: 'pending' });
